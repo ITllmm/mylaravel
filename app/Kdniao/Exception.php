@@ -1,8 +1,8 @@
 <?php
 
-namespace App\Kdniao;
+    namespace App\Kdniao;
 
-class Exception extends \Exception
-{
+    class Exception extends \Exception
+    {
 
-}
+    }

@@ -1,24 +1,24 @@
 <?php
+    namespace App\Kdniao; // <?php 不能与 namespace 对齐
 
-namespace App\Kdniao;
+    use GuzzleHttp\Client;
+    use GuzzleHttp\Exception\RequestException;
 
-use GuzzleHttp\Client;
-use GuzzleHttp\Exception\RequestException;
-
-class Tracking
-{
-    protected $client;
-
-    public function __construct(Client $client)
+    class Tracking
     {
-        $this->client = $client;
-    }
+        protected $client;
 
-    public function track(string $shipping_method, string $tracking_number) //要求类型而不是强制转化
-    {
+        public function __construct(Client $client)
+        {
+            $this->client = $client;
+        }
+
+        public function track(string $shipping_method, string $tracking_number) //要求类型而不是强制转化
+        {
+
             $request_data = [
                 'OrderCode' => '',  //订单编号
-                'ShipperCode' => $this->convertToShipperCode($shipping_method), //快递公司编码
+                'ShipperCode' => $this->convertToShipperCode($shipping_method, $tracking_number), //快递公司编码
                 'LogisticCode' => $tracking_number,//物流单号
             ];
 
@@ -34,38 +34,32 @@ class Tracking
 
             try {
                 $response = retry(3,  function () use ($data) { //重载三次
-                    return $this->client->post(config("kdniao.endpoint"), ['form_params' => $data]);  //use GuzzleHttp POST
-                                        // Use ['form_params'] reason:接口支持的消息接收方式为HTTP POST，请求方法的编码格式(utf-8)："application/x-www-form-urlencoded;charset=utf-8"。
+                   return $this->client->post(config("kdniao.endpoint"), ['form_params' => $data]);  //use GuzzleHttp POST
                 });
             } catch (RequestException $e) {
-                throw new Exception($e->getMessage());
+                   throw new Exception($e->getMessage());
             }
-
-//echo '<pre>';
-//print_r($response);  //GuzzleHttp\Psr7\Response Object
-//print_r($response->getBody()); //GuzzleHttp\Psr7\Stream Object
-//print_r($response->getBody()->getContents()); //json ??( )
-//exit;
 
            //根据公司业务处理返回的信息......
             $body = json_decode($response->getBody()->getContents(), 1); //getBody getContents -> GuzzleHttp
-
 
             if (!$body['Success']) { //订单查询失败
                 throw new Exception($body['Reason']); //抛出的异常交个调用你这接口的前端来处理
             }
 
             return [
+                'state' => $body['State'],
+                'state_reason' => $this->getStateReason($body['State']),
                 'tracking_number' => $tracking_number,
                 'shipping_method' => $shipping_method,
                 'traces' => $body['State']==0?0:$this->sortTracesByDate($body['Traces']),
             ];
-    }
+     }
 
-   //订单接受状态的时间排序，以最新的状态时间来排最前端('AcceptTime')
+    //订单接受状态的时间排序，以最新的状态时间来排最前端('AcceptTime')
     private function sortTracesByDate(array $data)
     {
-        return collect($data)->sortByDesc('AcceptTime')->toArray(); //toArray -> https://laravel.com/docs/5.4/collections#method-toarray
+          return collect($data)->sortByDesc('AcceptTime')->toArray();
     }
 
     // DataDesign
@@ -75,8 +69,41 @@ class Tracking
     }
 
     //Shipper Code
-    private function convertToShipperCode($method)
+    private function convertToShipperCode($method, $tracking_number)
     {
+        if  ($method == 'EMS') {
+            if (starts_with($tracking_number, 'R')) {
+                return 'YZPY';
+            }
+            return 'EMS';
+        }
+
         return $method;
+    }
+
+    // private function changeToShipperCode($method)
+    // {
+    //     if($method == 'DHL_EN') {
+    //         return 'DHL';
+    //     }
+
+    //     if ($method == 'FEDEX_GJ') {
+    //         return 'FEDEX';
+    //     }
+
+    //     return $method;
+    // }
+
+    //Get StateReason
+    private function getStateReason($state)
+    {
+        $state_reason = [
+             0 => '无轨迹',
+             2 => '在途中',
+             3 => '已签收',
+             4 => '问题件',
+            ];
+
+        return  $state_reason[$state];
     }
 }
